@@ -1,0 +1,612 @@
+{
+  "solution": [
+    "chunks","分片数据的命名列表。本例每个rank的数据切分2份：c0和c1，每份大小为原来的1/2，如r0_c0、r0_c1分别表示rank0的第1、2个分片",
+    "final_chunks","all-reduce完成后每个rank最终应持有的分片集合，只有2个：c0_sum和c1_sum。c{j}_sum是全部128个rank的c{j}分片规约(求和)结果：c0_sum = r0_c0 + r1_c0 + ... + r127_c0，c1_sum = r0_c1 + r1_c1 + ... + r127_c1；所有rank最终持有的内容完全相同",
+    "initial_possession","分片存放的初始位置，键为rank编号（如r0），值为该rank初始持有的分片列表（每rank 2个分片）",
+    "initial_switch","网络中的交换机列表。L1_N0_S0：第一层，节点0，交换机0；L2_P0_S0：第二层，平面0，交换机0，其余类比",
+    "operator","集合通信算子类型，本例为all-reduce（全规约）",
+    "round_count","通信总轮数，本例为14轮 = 7轮reduce-scatter + 7轮all-gather",
+    "rounds","每一轮的传输安排。每个transfer包含：action（reduce表示规约相加，用于第1-7轮reduce-scatter阶段；copy表示复制，用于第8-14轮all-gather阶段）、chunk_ranges（传输的分片列表）、src（源rank）、dst（目的rank）、route_id（传输路径，格式为 proof-轮次-源rank-经过的交换机-目的rank）。注意：reduce要求src与dst的贡献者集合无交集，否则数据被重复相加判错；同轮transfer只能读本轮开始时的状态",
+    "metrics","性能指标：max_round为最大轮数，round_times为每轮耗时（秒），total_time为总耗时（秒）",
+    "总耗时计算方法","单次传输耗时 = 启动时间1us + 交换机处理开销0.3us×经过的交换机跳数 + 单跳传输时延×传输跳数（单跳传输时延=传输数据量/链路带宽）。例如路径r0-L1_N0_S0-L2_P0_S0-L1_N1_S0-r8：经过3跳交换机，处理开销3×0.3us=0.9us；经过4段链路，即4跳传输时延；该次传输耗时=1us+0.9us+4×单跳传输时延。每轮耗时取该轮所有传输的最大值，total_time=各轮耗时之和"
+  ],
+  "chunks": [
+    "r0_c0","r0_c1",
+    "r1_c0","r1_c1",
+    "r2_c0","r2_c1",
+    "r3_c0","r3_c1",
+    "r4_c0","r4_c1",
+    "r5_c0","r5_c1",
+    "r6_c0","r6_c1",
+    "r7_c0","r7_c1",
+    "r8_c0","r8_c1",
+    "r9_c0","r9_c1",
+    "r10_c0","r10_c1",
+    "r11_c0","r11_c1",
+    "...",
+    "r127_c0","r127_c1"
+  ],
+  "final_chunks": [
+    "r0_c0+r1_c0+r2_c0+...+r127_c0","r0_c1+r1_c1+r2_c1+...+r127_c1"
+  ],
+  "initial_possession": {
+    "r0": [
+      "r0_c0",
+      "r0_c1"
+    ],
+    "r1": [
+      "r1_c0",
+      "r1_c1"
+    ],
+    "r2": [
+      "r2_c0",
+      "r2_c1"
+    ],
+    "r3": [
+      "r3_c0",
+      "r3_c1"
+    ],
+    "r4": [
+      "r4_c0",
+      "r4_c1"
+    ],
+    "r5": [
+      "r5_c0",
+      "r5_c1"
+    ],
+    "r6": [
+      "r6_c0",
+      "r6_c1"
+    ],
+    "r7": [
+      "r7_c0",
+      "r7_c1"
+    ],
+    "r8": [
+      "r8_c0",
+      "r8_c1"
+    ],
+    "r9": [
+      "r9_c0",
+      "r9_c1"
+    ],
+    "r10": [
+      "r10_c0",
+      "r10_c1"
+    ],
+    "r11": [
+      "r11_c0",
+      "r11_c1"
+    ],
+    "...":[],
+    "r127": [
+      "r127_c0",
+      "r127_c1"
+    ]
+  },
+  "initial_switch": [
+    "L1_N0_S0","L1_N0_S1","L1_N0_S2","L1_N0_S3","L1_N0_S4","L1_N0_S5","L1_N0_S6", // L1_N0_S0：第一层，节点0，交换机0，其余类比
+    "L1_N1_S0","L1_N1_S1","L1_N1_S2","L1_N1_S3","L1_N1_S4","L1_N1_S5","L1_N1_S6",
+    "L1_N2_S0","L1_N2_S1","L1_N2_S2","L1_N2_S3","L1_N2_S4","L1_N2_S5","L1_N2_S6",
+    "L1_N3_S0","L1_N3_S1","L1_N3_S2","L1_N3_S3","L1_N3_S4","L1_N3_S5","L1_N3_S6",
+    "L1_N4_S0","L1_N4_S1","L1_N4_S2","L1_N4_S3","L1_N4_S4","L1_N4_S5","L1_N4_S6",
+    "L1_N5_S0","L1_N5_S1","L1_N5_S2","L1_N5_S3","L1_N5_S4","L1_N5_S5","L1_N5_S6",
+    "L1_N6_S0","L1_N6_S1","L1_N6_S2","L1_N6_S3","L1_N6_S4","L1_N6_S5","L1_N6_S6",
+    "L1_N7_S0","L1_N7_S1","L1_N7_S2","L1_N7_S3","L1_N7_S4","L1_N7_S5","L1_N7_S6",
+    "L1_N8_S0","L1_N8_S1","L1_N8_S2","L1_N8_S3","L1_N8_S4","L1_N8_S5","L1_N8_S6",
+    "L1_N9_S0","L1_N9_S1","L1_N9_S2","L1_N9_S3","L1_N9_S4","L1_N9_S5","L1_N9_S6",
+    "L1_N10_S0","L1_N10_S1","L1_N10_S2","L1_N10_S3","L1_N10_S4","L1_N10_S5","L1_N10_S6",
+    "L1_N11_S0","L1_N11_S1","L1_N11_S2","L1_N11_S3","L1_N11_S4","L1_N11_S5","L1_N11_S6",
+    "L1_N12_S0","L1_N12_S1","L1_N12_S2","L1_N12_S3","L1_N12_S4","L1_N12_S5","L1_N12_S6",
+    "L1_N13_S0","L1_N13_S1","L1_N13_S2","L1_N13_S3","L1_N13_S4","L1_N13_S5","L1_N13_S6",
+    "L1_N14_S0","L1_N14_S1","L1_N14_S2","L1_N14_S3","L1_N14_S4","L1_N14_S5","L1_N14_S6",
+    "L1_N15_S0","L1_N15_S1","L1_N15_S2","L1_N15_S3","L1_N15_S4","L1_N15_S5","L1_N15_S6",
+    "L2_P0_S0","L2_P0_S1","L2_P0_S2","L2_P0_S3","L2_P0_S4","L2_P0_S5","L2_P0_S6","L2_P0_S7","L2_P0_S8","L2_P0_S9","L2_P0_S10","L2_P0_S11","L2_P0_S12","L2_P0_S13","L2_P0_S14","L2_P0_S15", // L2_P0_S0：第二层，平面0，交换机0，其余类比
+    "L2_P1_S0","L2_P1_S1","L2_P1_S2","L2_P1_S3","L2_P1_S4","L2_P1_S5","L2_P1_S6","L2_P1_S7","L2_P1_S8","L2_P1_S9","L2_P1_S10","L2_P1_S11","L2_P1_S12","L2_P1_S13","L2_P1_S14","L2_P1_S15",
+    "L2_P2_S0","L2_P2_S1","L2_P2_S2","L2_P2_S3","L2_P2_S4","L2_P2_S5","L2_P2_S6","L2_P2_S7","L2_P2_S8","L2_P2_S9","L2_P2_S10","L2_P2_S11","L2_P2_S12","L2_P2_S13","L2_P2_S14","L2_P2_S15",
+    "L2_P3_S0","L2_P3_S1","L2_P3_S2","L2_P3_S3","L2_P3_S4","L2_P3_S5","L2_P3_S6","L2_P3_S7","L2_P3_S8","L2_P3_S9","L2_P3_S10","L2_P3_S11","L2_P3_S12","L2_P3_S13","L2_P3_S14","L2_P3_S15",
+    "L2_P4_S0","L2_P4_S1","L2_P4_S2","L2_P4_S3","L2_P4_S4","L2_P4_S5","L2_P4_S6","L2_P4_S7","L2_P4_S8","L2_P4_S9","L2_P4_S10","L2_P4_S11","L2_P4_S12","L2_P4_S13","L2_P4_S14","L2_P4_S15",
+    "L2_P5_S0","L2_P5_S1","L2_P5_S2","L2_P5_S3","L2_P5_S4","L2_P5_S5","L2_P5_S6","L2_P5_S7","L2_P5_S8","L2_P5_S9","L2_P5_S10","L2_P5_S11","L2_P5_S12","L2_P5_S13","L2_P5_S14","L2_P5_S15",
+    "L2_P6_S0","L2_P6_S1","L2_P6_S2","L2_P6_S3","L2_P6_S4","L2_P6_S5","L2_P6_S6","L2_P6_S7","L2_P6_S8","L2_P6_S9","L2_P6_S10","L2_P6_S11","L2_P6_S12","L2_P6_S13","L2_P6_S14","L2_P6_S15"
+  ],
+  "metrics": {
+    "max_round": 14,
+    "round_times": [
+      0.0006331024905660377,
+      0.00029959314285714285,
+      0.00014979657142857143,
+      7.489828571428571e-05,
+      7.569828571428572e-05,
+      3.8249142857142856e-05,
+      1.9524571428571427e-05,
+      0.0006331024905660377,
+      0.00029959314285714285,
+      0.00014979657142857143,
+      7.489828571428571e-05,
+      7.569828571428572e-05,
+      3.8249142857142856e-05,
+      1.9524571428571427e-05
+    ],
+    "total_time": 0.0025817249811320754  // 数值为示例：前7轮reduce-scatter数据量逐轮减半，后7轮all-gather数据量逐轮倍增
+  },
+  "operator": "all-reduce",
+  "round_count": 14,
+  "rounds": [
+    {
+      "round": 1,
+      "transfers": [
+        {
+          "action": "reduce",
+          "chunk_ranges": [
+            "r64_c0",
+            "r64_c1",
+            "r65_c0",
+            "r65_c1",
+            "...",
+            "r127_c0",
+            "r127_c1"
+          ],
+          "dst": "r64",
+          "route_id": "proof-1-r0-L1_N0_S0-L2_P0_S0-L1_N8_S0-r64", // 0号rank的r64_c0~r127_c1分片数据，发送到64号rank，第1轮（reduce规约），经过的路径为r0，L1_N0_S0，L2_P0_S0，L1_N8_S0，r64
+          "src": "r0"
+        },
+        {
+          "action": "reduce",
+          "chunk_ranges": [
+            "r0_c0",
+            "r0_c1",
+            "r1_c0",
+            "r1_c1",
+            "...",
+            "r63_c0",
+            "r63_c1"
+          ],
+          "dst": "r0",
+          "route_id": "proof-1-r64-L1_N8_S0-L2_P0_S0-L1_N0_S0-r0", // 64号rank的r0_c0~r63_c1分片数据，发送到0号rank，第1轮（reduce规约），经过的路径为r64，L1_N8_S0，L2_P0_S0，L1_N0_S0，r0
+          "src": "r64"
+        }
+        "..."
+      ]
+    },
+    {
+      "round": 2,
+      "transfers": [
+        {
+          "action": "reduce",
+          "chunk_ranges": [
+            "r32_c0",
+            "r32_c1",
+            "r33_c0",
+            "r33_c1",
+            "...",
+            "r63_c0",
+            "r63_c1"
+          ],
+          "dst": "r32",
+          "route_id": "proof-2-r0-L1_N0_S0-L2_P0_S0-L1_N4_S0-r32", // 0号rank的r32_c0~r63_c1分片数据，发送到32号rank，第2轮（reduce规约），经过的路径为r0，L1_N0_S0，L2_P0_S0，L1_N4_S0，r32
+          "src": "r0"
+        },
+        {
+          "action": "reduce",
+          "chunk_ranges": [
+            "r0_c0",
+            "r0_c1",
+            "r1_c0",
+            "r1_c1",
+            "...",
+            "r31_c0",
+            "r31_c1"
+          ],
+          "dst": "r0",
+          "route_id": "proof-2-r32-L1_N4_S0-L2_P0_S0-L1_N0_S0-r0", // 32号rank的r0_c0~r31_c1分片数据，发送到0号rank，第2轮（reduce规约），经过的路径为r32，L1_N4_S0，L2_P0_S0，L1_N0_S0，r0
+          "src": "r32"
+        }
+        "..."
+      ]
+    },
+    {
+      "round": 3,
+      "transfers": [
+        {
+          "action": "reduce",
+          "chunk_ranges": [
+            "r16_c0",
+            "r16_c1",
+            "r17_c0",
+            "r17_c1",
+            "...",
+            "r31_c0",
+            "r31_c1"
+          ],
+          "dst": "r16",
+          "route_id": "proof-3-r0-L1_N0_S0-L2_P0_S0-L1_N2_S0-r16", // 0号rank的r16_c0~r31_c1分片数据，发送到16号rank，第3轮（reduce规约），经过的路径为r0，L1_N0_S0，L2_P0_S0，L1_N2_S0，r16
+          "src": "r0"
+        },
+        {
+          "action": "reduce",
+          "chunk_ranges": [
+            "r0_c0",
+            "r0_c1",
+            "r1_c0",
+            "r1_c1",
+            "...",
+            "r15_c0",
+            "r15_c1"
+          ],
+          "dst": "r0",
+          "route_id": "proof-3-r16-L1_N2_S0-L2_P0_S0-L1_N0_S0-r0", // 16号rank的r0_c0~r15_c1分片数据，发送到0号rank，第3轮（reduce规约），经过的路径为r16，L1_N2_S0，L2_P0_S0，L1_N0_S0，r0
+          "src": "r16"
+        }
+        "..."
+      ]
+    },
+    {
+      "round": 4,
+      "transfers": [
+        {
+          "action": "reduce",
+          "chunk_ranges": [
+            "r8_c0",
+            "r8_c1",
+            "r9_c0",
+            "r9_c1",
+            "...",
+            "r15_c0",
+            "r15_c1"
+          ],
+          "dst": "r8",
+          "route_id": "proof-4-r0-L1_N0_S0-L2_P0_S0-L1_N1_S0-r8", // 0号rank的r8_c0~r15_c1分片数据，发送到8号rank，第4轮（reduce规约），经过的路径为r0，L1_N0_S0，L2_P0_S0，L1_N1_S0，r8
+          "src": "r0"
+        },
+        {
+          "action": "reduce",
+          "chunk_ranges": [
+            "r0_c0",
+            "r0_c1",
+            "r1_c0",
+            "r1_c1",
+            "...",
+            "r7_c0",
+            "r7_c1"
+          ],
+          "dst": "r0",
+          "route_id": "proof-4-r8-L1_N1_S0-L2_P0_S0-L1_N0_S0-r0", // 8号rank的r0_c0~r7_c1分片数据，发送到0号rank，第4轮（reduce规约），经过的路径为r8，L1_N1_S0，L2_P0_S0，L1_N0_S0，r0
+          "src": "r8"
+        }
+        "..."
+      ]
+    },
+    {
+      "round": 5,
+      "transfers": [
+        {
+          "action": "reduce",
+          "chunk_ranges": [
+            "r4_c0",
+            "r4_c1",
+            "r5_c0",
+            "r5_c1",
+            "r6_c0",
+            "r6_c1",
+            "r7_c0",
+            "r7_c1"
+          ],
+          "dst": "r4",
+          "route_id": "proof-5-r0-L1_N0_S0-r4", // 0号rank的r4_c0~r7_c1分片数据，发送到4号rank，第5轮（reduce规约），经过的路径为r0，L1_N0_S0，r4
+          "src": "r0"
+        },
+        {
+          "action": "reduce",
+          "chunk_ranges": [
+            "r0_c0",
+            "r0_c1",
+            "r1_c0",
+            "r1_c1",
+            "r2_c0",
+            "r2_c1",
+            "r3_c0",
+            "r3_c1"
+          ],
+          "dst": "r0",
+          "route_id": "proof-5-r4-L1_N0_S0-r0", // 4号rank的r0_c0~r3_c1分片数据，发送到0号rank，第5轮（reduce规约），经过的路径为r4，L1_N0_S0，r0
+          "src": "r4"
+        }
+        "..."
+      ]
+    },
+    {
+      "round": 6,
+      "transfers": [
+        {
+          "action": "reduce",
+          "chunk_ranges": [
+            "r2_c0",
+            "r2_c1",
+            "r3_c0",
+            "r3_c1"
+          ],
+          "dst": "r2",
+          "route_id": "proof-6-r0-L1_N0_S0-r2", // 0号rank的r2_c0~r3_c1分片数据，发送到2号rank，第6轮（reduce规约），经过的路径为r0，L1_N0_S0，r2
+          "src": "r0"
+        },
+        {
+          "action": "reduce",
+          "chunk_ranges": [
+            "r0_c0",
+            "r0_c1",
+            "r1_c0",
+            "r1_c1"
+          ],
+          "dst": "r0",
+          "route_id": "proof-6-r2-L1_N0_S0-r0", // 2号rank的r0_c0~r1_c1分片数据，发送到0号rank，第6轮（reduce规约），经过的路径为r2，L1_N0_S0，r0
+          "src": "r2"
+        }
+        "..."
+      ]
+    },
+    {
+      "round": 7,
+      "transfers": [
+        {
+          "action": "reduce",
+          "chunk_ranges": [
+            "r1_c0",
+            "r1_c1"
+          ],
+          "dst": "r1",
+          "route_id": "proof-7-r0-L1_N0_S0-r1", // 0号rank的r1_c0~r1_c1分片数据，发送到1号rank，第7轮（reduce规约），经过的路径为r0，L1_N0_S0，r1
+          "src": "r0"
+        },
+        {
+          "action": "reduce",
+          "chunk_ranges": [
+            "r0_c0",
+            "r0_c1"
+          ],
+          "dst": "r0",
+          "route_id": "proof-7-r1-L1_N0_S0-r0", // 1号rank的r0_c0~r0_c1分片数据，发送到0号rank，第7轮（reduce规约），经过的路径为r1，L1_N0_S0，r0
+          "src": "r1"
+        }
+        "..."
+      ]
+    },
+    {
+      "round": 8,
+      "transfers": [
+        {
+          "action": "copy",
+          "chunk_ranges": [
+            "r0_c0",
+            "r0_c1"
+          ],
+          "dst": "r1",
+          "route_id": "proof-8-r0-L1_N0_S0-r1", // 0号rank的r0_c0~r0_c1分片数据，发送到1号rank，第8轮（copy分发），经过的路径为r0，L1_N0_S0，r1
+          "src": "r0"
+        },
+        {
+          "action": "copy",
+          "chunk_ranges": [
+            "r1_c0",
+            "r1_c1"
+          ],
+          "dst": "r0",
+          "route_id": "proof-8-r1-L1_N0_S0-r0", // 1号rank的r1_c0~r1_c1分片数据，发送到0号rank，第8轮（copy分发），经过的路径为r1，L1_N0_S0，r0
+          "src": "r1"
+        }
+        "..."
+      ]
+    },
+    {
+      "round": 9,
+      "transfers": [
+        {
+          "action": "copy",
+          "chunk_ranges": [
+            "r0_c0",
+            "r0_c1",
+            "r1_c0",
+            "r1_c1"
+          ],
+          "dst": "r2",
+          "route_id": "proof-9-r0-L1_N0_S0-r2", // 0号rank的r0_c0~r1_c1分片数据，发送到2号rank，第9轮（copy分发），经过的路径为r0，L1_N0_S0，r2
+          "src": "r0"
+        },
+        {
+          "action": "copy",
+          "chunk_ranges": [
+            "r2_c0",
+            "r2_c1",
+            "r3_c0",
+            "r3_c1"
+          ],
+          "dst": "r0",
+          "route_id": "proof-9-r2-L1_N0_S0-r0", // 2号rank的r2_c0~r3_c1分片数据，发送到0号rank，第9轮（copy分发），经过的路径为r2，L1_N0_S0，r0
+          "src": "r2"
+        }
+        "..."
+      ]
+    },
+    {
+      "round": 10,
+      "transfers": [
+        {
+          "action": "copy",
+          "chunk_ranges": [
+            "r0_c0",
+            "r0_c1",
+            "r1_c0",
+            "r1_c1",
+            "r2_c0",
+            "r2_c1",
+            "r3_c0",
+            "r3_c1"
+          ],
+          "dst": "r4",
+          "route_id": "proof-10-r0-L1_N0_S0-r4", // 0号rank的r0_c0~r3_c1分片数据，发送到4号rank，第10轮（copy分发），经过的路径为r0，L1_N0_S0，r4
+          "src": "r0"
+        },
+        {
+          "action": "copy",
+          "chunk_ranges": [
+            "r4_c0",
+            "r4_c1",
+            "r5_c0",
+            "r5_c1",
+            "r6_c0",
+            "r6_c1",
+            "r7_c0",
+            "r7_c1"
+          ],
+          "dst": "r0",
+          "route_id": "proof-10-r4-L1_N0_S0-r0", // 4号rank的r4_c0~r7_c1分片数据，发送到0号rank，第10轮（copy分发），经过的路径为r4，L1_N0_S0，r0
+          "src": "r4"
+        }
+        "..."
+      ]
+    },
+    {
+      "round": 11,
+      "transfers": [
+        {
+          "action": "copy",
+          "chunk_ranges": [
+            "r0_c0",
+            "r0_c1",
+            "r1_c0",
+            "r1_c1",
+            "...",
+            "r7_c0",
+            "r7_c1"
+          ],
+          "dst": "r8",
+          "route_id": "proof-11-r0-L1_N0_S0-L2_P0_S0-L1_N1_S0-r8", // 0号rank的r0_c0~r7_c1分片数据，发送到8号rank，第11轮（copy分发），经过的路径为r0，L1_N0_S0，L2_P0_S0，L1_N1_S0，r8
+          "src": "r0"
+        },
+        {
+          "action": "copy",
+          "chunk_ranges": [
+            "r8_c0",
+            "r8_c1",
+            "r9_c0",
+            "r9_c1",
+            "...",
+            "r15_c0",
+            "r15_c1"
+          ],
+          "dst": "r0",
+          "route_id": "proof-11-r8-L1_N1_S0-L2_P0_S0-L1_N0_S0-r0", // 8号rank的r8_c0~r15_c1分片数据，发送到0号rank，第11轮（copy分发），经过的路径为r8，L1_N1_S0，L2_P0_S0，L1_N0_S0，r0
+          "src": "r8"
+        }
+        "..."
+      ]
+    },
+    {
+      "round": 12,
+      "transfers": [
+        {
+          "action": "copy",
+          "chunk_ranges": [
+            "r0_c0",
+            "r0_c1",
+            "r1_c0",
+            "r1_c1",
+            "...",
+            "r15_c0",
+            "r15_c1"
+          ],
+          "dst": "r16",
+          "route_id": "proof-12-r0-L1_N0_S0-L2_P0_S0-L1_N2_S0-r16", // 0号rank的r0_c0~r15_c1分片数据，发送到16号rank，第12轮（copy分发），经过的路径为r0，L1_N0_S0，L2_P0_S0，L1_N2_S0，r16
+          "src": "r0"
+        },
+        {
+          "action": "copy",
+          "chunk_ranges": [
+            "r16_c0",
+            "r16_c1",
+            "r17_c0",
+            "r17_c1",
+            "...",
+            "r31_c0",
+            "r31_c1"
+          ],
+          "dst": "r0",
+          "route_id": "proof-12-r16-L1_N2_S0-L2_P0_S0-L1_N0_S0-r0", // 16号rank的r16_c0~r31_c1分片数据，发送到0号rank，第12轮（copy分发），经过的路径为r16，L1_N2_S0，L2_P0_S0，L1_N0_S0，r0
+          "src": "r16"
+        }
+        "..."
+      ]
+    },
+    {
+      "round": 13,
+      "transfers": [
+        {
+          "action": "copy",
+          "chunk_ranges": [
+            "r0_c0",
+            "r0_c1",
+            "r1_c0",
+            "r1_c1",
+            "...",
+            "r31_c0",
+            "r31_c1"
+          ],
+          "dst": "r32",
+          "route_id": "proof-13-r0-L1_N0_S0-L2_P0_S0-L1_N4_S0-r32", // 0号rank的r0_c0~r31_c1分片数据，发送到32号rank，第13轮（copy分发），经过的路径为r0，L1_N0_S0，L2_P0_S0，L1_N4_S0，r32
+          "src": "r0"
+        },
+        {
+          "action": "copy",
+          "chunk_ranges": [
+            "r32_c0",
+            "r32_c1",
+            "r33_c0",
+            "r33_c1",
+            "...",
+            "r63_c0",
+            "r63_c1"
+          ],
+          "dst": "r0",
+          "route_id": "proof-13-r32-L1_N4_S0-L2_P0_S0-L1_N0_S0-r0", // 32号rank的r32_c0~r63_c1分片数据，发送到0号rank，第13轮（copy分发），经过的路径为r32，L1_N4_S0，L2_P0_S0，L1_N0_S0，r0
+          "src": "r32"
+        }
+        "..."
+      ]
+    },
+    {
+      "round": 14,
+      "transfers": [
+        {
+          "action": "copy",
+          "chunk_ranges": [
+            "r0_c0",
+            "r0_c1",
+            "r1_c0",
+            "r1_c1",
+            "...",
+            "r63_c0",
+            "r63_c1"
+          ],
+          "dst": "r64",
+          "route_id": "proof-14-r0-L1_N0_S0-L2_P0_S0-L1_N8_S0-r64", // 0号rank的r0_c0~r63_c1分片数据，发送到64号rank，第14轮（copy分发），经过的路径为r0，L1_N0_S0，L2_P0_S0，L1_N8_S0，r64
+          "src": "r0"
+        },
+        {
+          "action": "copy",
+          "chunk_ranges": [
+            "r64_c0",
+            "r64_c1",
+            "r65_c0",
+            "r65_c1",
+            "...",
+            "r127_c0",
+            "r127_c1"
+          ],
+          "dst": "r0",
+          "route_id": "proof-14-r64-L1_N8_S0-L2_P0_S0-L1_N0_S0-r0", // 64号rank的r64_c0~r127_c1分片数据，发送到0号rank，第14轮（copy分发），经过的路径为r64，L1_N8_S0，L2_P0_S0，L1_N0_S0，r0
+          "src": "r64"
+        }
+        "..."
+      ]
+    }
+  ]
+}

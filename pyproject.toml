@@ -1,0 +1,16 @@
+[project]
+name = "agentcc-demo"
+version = "0.1.0"
+description = "AgentCC 赛题最小求解 demo：读取拓扑 1 输入，生成 AllGather / AllReduce 调度方案并用本地 Replay 校验"
+requires-python = ">=3.10"
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
