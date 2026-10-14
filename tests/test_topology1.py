@@ -1,4 +1,5 @@
 """拓扑 1 最小 demo 的自检用例。"""
+
 from pathlib import Path
 
 import pytest
@@ -6,7 +7,7 @@ import pytest
 from agentcc import Topology, plan_all_gather, plan_all_reduce, replay
 
 ROOT = Path(__file__).resolve().parents[1]
-TOPO = ROOT / "topic3/拓扑与输出规范/拓扑1/拓扑1输入.json"
+TOPO = ROOT / "topic/拓扑与输出规范/拓扑1/拓扑1输入.json"
 
 
 @pytest.fixture(scope="module")

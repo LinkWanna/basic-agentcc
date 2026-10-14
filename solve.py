@@ -25,7 +25,7 @@ from agentcc import (
 )
 
 ROOT = Path(__file__).resolve().parent
-DEFAULT_TOPOLOGY = ROOT / "topic3/拓扑与输出规范/拓扑1/拓扑1输入.json"
+DEFAULT_TOPOLOGY = ROOT / "topic/拓扑与输出规范/拓扑1/拓扑1输入.json"
 
 
 def build_plan(topo: Topology, operator: str, split: int, fanout: int) -> dict:
